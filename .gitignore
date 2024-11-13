@@ -163,3 +163,8 @@ cython_debug/
 
 # custom debugging scripts
 debug.sh
+start_server.sh
+settings.yaml
+mcserver/
+mcrcon
+LICENSE

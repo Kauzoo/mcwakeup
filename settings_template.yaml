@@ -26,7 +26,8 @@ LoginDisconnectResponseSettings:
 
 Rcon:
   Password: ""
-  Host: "127.0.0.1" 
+  Host: "127.0.0.1"
+  Port: 25575
 
 Logging:
   Path: "./mcwakeup.log"

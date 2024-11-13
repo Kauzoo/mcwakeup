@@ -43,13 +43,14 @@ DISCONNECT_RESPONSE_TEXT_FAILURE = settings['LoginDisconnectResponseSettings']['
 # Rcon
 RCON_PASSWORD = settings['Rcon']['Password']
 RCON_HOST = settings['Rcon']['Host']
+RCON_PORT = str(settings['Rcon']['Port'])
 
 # Logging
 LOGGER_PATH = settings['Logging']['Path']
 
 
-MCRCON_ARGS_LIST = [r'/opt/minecraft/tools/mcrcon/mcrcon', '-H', RCON_HOST, '-p', RCON_PASSWORD, 'list']
-MCRCON_ARGS_STOP = [r'/opt/minecraft/tools/mcrcon/mcrcon', '-H', RCON_HOST, '-p', RCON_PASSWORD, 'stop']
+MCRCON_ARGS_LIST = [MCRCON_PATH, '-H', RCON_HOST, '-P', RCON_PORT,'-p', RCON_PASSWORD, 'list']
+MCRCON_ARGS_STOP = [MCRCON_PATH, '-H', RCON_HOST, '-P', RCON_PORT,'-p', RCON_PASSWORD, 'stop']
 # BUFFER SETTINGS
 #RECV_BUFFER_SIZE = 4096
 
@@ -301,7 +302,7 @@ def writeVarInt(number : int) -> bytes:
 
 
 def createStatusResponseData() -> bytes:
-    RESPONE_JSON_1 = "{ \"version\": { \"name\": \"" + STATUS_RESPONSE_NAME + "\", \"protocol\":" + STATUS_RESPONSE_PROTOCOL + "},"
+    RESPONE_JSON_1 = "{ \"version\": { \"name\": \"" + STATUS_RESPONSE_NAME + "\", \"protocol\":" + str(STATUS_RESPONSE_PROTOCOL) + "},"
     RESPONE_JSON_2 = "\"description\": { \"text\": \"" + STATUS_RESPONSE_DESCRIPTION + "\"}}"
     RESPONE_JSON = RESPONE_JSON_1 + RESPONE_JSON_2
     length = writeVarInt(len(RESPONE_JSON))
