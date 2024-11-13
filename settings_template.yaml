@@ -1,0 +1,32 @@
+# Copy this file and rename it to settings.yaml ; change values as needed 
+Paths:
+  # Path to mcrcon ; Used to monitor server
+  Mcrcon: "/opt/minecraft/tools/mcrcon/mcrcon"
+  # Path to whitelist file for the minecraft server; Used to control which users can wake up server
+  Whitelist: "/opt/minecraft/server/whitelist.json"
+  # Path to shell script to start the actual minecraft server
+  Mcserverstarter: "./start_server.sh"
+
+WakeupServerSettings:
+  Host: "0.0.0.0"
+  Port: 25565
+  BufferSize: 4096
+  WakeupTimeout: 5  # Timeout before server is started . To low values can cause issues with freeing up the socket
+  MonitorTimeout: 40  # How long to wait before rcon thread start monitoring the server state (hacky)
+  MonitorFrequency: 600 # How frequently rcon will query the server state
+
+StatusResponeSettings:
+  Name: "1.20.5"
+  Protocol: 768
+  Description: "Server not running. Connect to start server."
+
+LoginDisconnectResponseSettings:
+  TextSuccess: "Success. Starting Server. Please wait a couple seconds."
+  TextFailure: "Invalid Credentils. You are not whitelisted. Contact admins."
+
+Rcon:
+  Password: ""
+  Host: "127.0.0.1" 
+
+Logging:
+  Path: "./mcwakeup.log"

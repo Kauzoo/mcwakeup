@@ -15,22 +15,49 @@ import logging
 # TODO Add yaml settings file
 ### NOTES
 
-HOST = "0.0.0.0"
-PORT =  25565
-WHITELIST = "/opt/minecraft/server/whitelist.json"
-MCRCON = "/opt/minecraft/tools/mcrcon/mcrcon"
-MCRCON_ARGS_LIST = [r'/opt/minecraft/tools/mcrcon/mcrcon', '-H', '127.0.0.1', '-p', 'oddacorngang', 'list']
-MCRCON_ARGS_STOP = [r'/opt/minecraft/tools/mcrcon/mcrcon', '-H', '127.0.0.1', '-p', 'oddacorngang', 'stop']
-MCSERVER_DIR = r'/opt/minecraft/server/'
-MCSERVER_ARGS = [r'/usr/bin/java', '-Xmx1024M', '-Xms1024M', '-jar server.jar nogui']
+with open('settings.yaml', 'r') as file:
+            settings = yaml.safe_load(file)
+
+# Paths
+MCRCON_PATH = settings['Paths']['Mcrcon']
+WHITELIST_PATH = settings['Paths']['Whitelist']
+SERVERSTARTER_PATH = settings['Paths']['Mcserverstarter']
+
+# Wakeup Server Settings
+MCWAKEUP_HOST = settings['WakeupServerSettings']['Host']
+MCWAKEUP_PORT =  settings['WakeupServerSettings']['Port']
+MCWAKEUP_BUFFER_SIZE = settings['WakeupServerSettings']['BufferSize']
+MCWAKEUP_WAKEUP_TIMEOUT = settings['WakeupServerSettings']['WakeupTimeout']
+MCWAKEUP_MONITOR_TIMEOUT = settings['WakeupServerSettings']['MonitorTimeout']
+MCWAKEUP_MONITOR_FREQUENCY = settings['WakeupServerSettings']['MonitorFrequency']
+
+# Status Response Settings
+STATUS_RESPONSE_NAME = settings['StatusResponeSettings']['Name']
+STATUS_RESPONSE_PROTOCOL = settings['StatusResponeSettings']['Protocol']
+STATUS_RESPONSE_DESCRIPTION = settings['StatusResponeSettings']['Description']
+
+# LoginDisconnectResponseSettings
+DISCONNECT_RESPONSE_TEXT_SUCCESS = settings['LoginDisconnectResponseSettings']['TextSuccess']
+DISCONNECT_RESPONSE_TEXT_FAILURE = settings['LoginDisconnectResponseSettings']['TextFailure']
+
+# Rcon
+RCON_PASSWORD = settings['Rcon']['Password']
+RCON_HOST = settings['Rcon']['Host']
+
+# Logging
+LOGGER_PATH = settings['Logging']['Path']
+
+
+MCRCON_ARGS_LIST = [r'/opt/minecraft/tools/mcrcon/mcrcon', '-H', RCON_HOST, '-p', RCON_PASSWORD, 'list']
+MCRCON_ARGS_STOP = [r'/opt/minecraft/tools/mcrcon/mcrcon', '-H', RCON_HOST, '-p', RCON_PASSWORD, 'stop']
 # BUFFER SETTINGS
-RECV_BUFFER_SIZE = 4096
+#RECV_BUFFER_SIZE = 4096
 
 
 # Helpers
 glob_stop_monitoring = False
 logger = logging.getLogger(__name__)
-logging.basicConfig(filename='mcwakeup.log', level=logging.INFO)
+logging.basicConfig(filename=LOGGER_PATH, level=logging.INFO)
 
 # DATA TYPES
 # Everything is big endian except VarInt
@@ -130,7 +157,7 @@ def parsePacket(bytesin : bytearray, conn : socket.socket, max_retries_empty : i
             logger.warning(f"{info}: Packetbuffer was empty. Retrying (Attempt {empty_retries} of {max_retries_empty})")
             if (empty_retries >= max_retries_empty):
                 raise PackeBufferEmptyError(f"bytesin buffer was empty after {empty_retries} attempts")
-            bytesin.extend(bytearray(conn.recv(4096)))
+            bytesin.extend(bytearray(conn.recv(MCWAKEUP_BUFFER_SIZE)))
             empty_retries += 1
             continue
         break
@@ -144,7 +171,7 @@ def parsePacket(bytesin : bytearray, conn : socket.socket, max_retries_empty : i
                 logger.warning(f"{info}: Packetbuffer was not long enough. (Current_Length: {len(bytesin)}, expected {offset_packet_length + length}).\nRetrying (Attempt {length_retries} of {max_retries_length})")
                 if (length_retries >= empty_retries):
                     raise PackeBufferLengthError(f"bytesin was was not long enough after {length_retries} attempts")
-                bytesin.extend(bytearray(conn.recv(4096)))
+                bytesin.extend(bytearray(conn.recv(MCWAKEUP_BUFFER_SIZE)))
                 length_retries += 1
                 continue
         break
@@ -167,22 +194,22 @@ def tryParseRequeset(bytesin : bytearray, conn : socket.socket, parser, info : s
     except PackeBufferEmptyError as e:
         logger.exception(f"Failed to parse {info}.\n{e}")
         conn.close()
-        s.close()
+        #s.close()
         return (False, None)
     except PackeBufferLengthError as e:
         logger.exception(f"Failed to parse {info}.\n{e}\nPackbuf: {bytesin}")
         conn.close()
-        s.close()
+        #s.close()
         return (False, None)
     except UnexpectedPacketError as e:
         logger.exception(f"Failed to parse {info}.\n{e}")
         conn.close()
-        s.close()
+        #s.close()
         return (False, None)
     except OSError as e:
         logger.error(f"Failed to parse {info}. Most likely socket related issue.\n{e}", exc_info=True, stack_info=True)
         conn.close()
-        s.close()
+        #s.close()
         return (False, None)
     
 
@@ -274,15 +301,9 @@ def writeVarInt(number : int) -> bytes:
 
 
 def createStatusResponseData() -> bytes:
-    RESPONE_JSON = r"""{
-    "version": {
-        "name": "1.20.5",
-        "protocol": 768
-    },
-    "description": {
-        "text": "Server not running. Connect to start server."
-    }
-    }"""
+    RESPONE_JSON_1 = "{ \"version\": { \"name\": \"" + STATUS_RESPONSE_NAME + "\", \"protocol\":" + STATUS_RESPONSE_PROTOCOL + "},"
+    RESPONE_JSON_2 = "\"description\": { \"text\": \"" + STATUS_RESPONSE_DESCRIPTION + "\"}}"
+    RESPONE_JSON = RESPONE_JSON_1 + RESPONE_JSON_2
     length = writeVarInt(len(RESPONE_JSON))
     return length + RESPONE_JSON.encode()
 
@@ -306,7 +327,7 @@ def check_user_whitelisted(name : str, uuid : bytes) -> bool:
     Check if a user that is on the servers whitelist attempted to connect
     User is identified by (username, uuid) tuple
     """
-    with open(WHITELIST, 'r') as j:
+    with open(WHITELIST_PATH, 'r') as j:
         whilelist_entries = json.load(j)
         for player in whilelist_entries:
             if (bytes.fromhex(player["uuid"].replace('-', '')) == bytes(uuid)) and (player["name"] == name):
@@ -345,7 +366,7 @@ def monitor_server_status():
     global glob_stop_monitoring
     s = sched.scheduler(time.time, time.sleep)
     while not glob_stop_monitoring:
-        s.enter(20, 1, query_server_status)
+        s.enter(MCWAKEUP_MONITOR_FREQUENCY, 1, query_server_status)
         s.run()
     glob_stop_monitoring = False
     return
@@ -353,7 +374,7 @@ def monitor_server_status():
 
 def run_server():
     print("Attempting to start server...")
-    preturn = subprocess.run("/opt/minecraft/start_server.sh")
+    preturn = subprocess.run(SERVERSTARTER_PATH)
     print("Server was stopped")
     return
 
@@ -366,7 +387,7 @@ def main():
             try:
                 # Setup socket on the mc-server's default port
                 s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                s.bind((HOST, PORT))
+                s.bind((MCWAKEUP_HOST, MCWAKEUP_PORT))
                 s.listen()
                 print("Listening for connections...")
                 conn, addr = s.accept()
@@ -379,7 +400,7 @@ def main():
                 # directly after the Handshake packet without waiting for a server response
                 # Expect Handshake (Client -> Server)
 
-                packbuf = bytearray(conn.recv(4096))
+                packbuf = bytearray(conn.recv(MCWAKEUP_BUFFER_SIZE))
             except OSError as e:
                 logger.error(f"Failed while trying to receive initial data. Most likely socket related issue.\n{e}", exc_info=True, stack_info=True)
                 conn.close()
@@ -412,7 +433,7 @@ def main():
                 print("Processing Ping Request")
                 if (is_status_request):
                     try:
-                        packbuf = bytearray(conn.recv(4096))
+                        packbuf = bytearray(conn.recv(MCWAKEUP_BUFFER_SIZE))
                     except OSError as e:
                         logger.error(f"Failed while trying to receive initial data. Most likely socket related issue.\n{e}", exc_info=True, stack_info=True)
                         conn.close()
@@ -446,7 +467,7 @@ def main():
                 disconnect_login_packet = b''
                 if (login_success):
                     # Respond with Disconnect (login) (Client -> Server)
-                    LOGIN_SUCCESS = r"""{ "text":"Success. Starting Server. Please wait a couple seconds." }"""
+                    LOGIN_SUCCESS = "{ \"text\":\"" + DISCONNECT_RESPONSE_TEXT_SUCCESS + "\" }"
                     disconnect_login_packet = createDisconnectLoginPacket(LOGIN_SUCCESS)
                     conn.send(disconnect_login_packet)
                     # Close connection to free it up for the mcserver
@@ -459,16 +480,16 @@ def main():
                     # This is kinda ugly
                     print("Preparing to start server...")
                     print("System will wait 5 Seconds in order for Socket to be freed up.")
-                    time.sleep(5)
+                    time.sleep(MCWAKEUP_WAKEUP_TIMEOUT)
                     server_thread.start()
                     # TODO This is ugl. Wait a certain amount of time to make sure the server is running before starting monitoring thread
-                    time.sleep(40)
+                    time.sleep(MCWAKEUP_MONITOR_TIMEOUT)
                     monitor_thread.start()
                     server_thread.join()
                     monitor_thread.join()
                 else:
                     # Respond with Disconnect (login) (Client -> Server)
-                    LOGIN_FAILURE = r"""{ "text":"Invalid Credentils. You are not whitelisted. Contact admins." }"""
+                    LOGIN_FAILURE = "{ \"text\":\"" + DISCONNECT_RESPONSE_TEXT_FAILURE + "\" }"
                     disconnect_login_packet = createDisconnectLoginPacket(LOGIN_FAILURE)
                     conn.send(disconnect_login_packet)
                     conn.close()
