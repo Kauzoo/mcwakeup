@@ -17,7 +17,6 @@ import logging
 
 HOST = "0.0.0.0"
 PORT =  25565
-BUFFER_MAX_SIZE = 40960
 WHITELIST = "/opt/minecraft/server/whitelist.json"
 MCRCON = "/opt/minecraft/tools/mcrcon/mcrcon"
 MCRCON_ARGS_LIST = [r'/opt/minecraft/tools/mcrcon/mcrcon', '-H', '127.0.0.1', '-p', 'oddacorngang', 'list']
@@ -26,7 +25,7 @@ MCSERVER_DIR = r'/opt/minecraft/server/'
 MCSERVER_ARGS = [r'/usr/bin/java', '-Xmx1024M', '-Xms1024M', '-jar server.jar nogui']
 # BUFFER SETTINGS
 RECV_BUFFER_SIZE = 4096
-LONGER_PACKET_BUFFER_SIZE = 4096
+
 
 # Helpers
 glob_stop_monitoring = False
@@ -48,8 +47,6 @@ def parseVarInt(bytesin : bytes) -> tuple[int, int]:
     # Only datatype which is LE
     # MSB indicates if more data to come, remaining 7 LSB for value
     # Max length is 5 bytes
-    SEGMENT_BITS = 0x7F
-    CONTINUE_BIT = 0x80
     currentByte = b''
     bytecount = 0
 
@@ -179,6 +176,11 @@ def tryParseRequeset(bytesin : bytearray, conn : socket.socket, parser, info : s
         return (False, None)
     except UnexpectedPacketError as e:
         logger.exception(f"Failed to parse {info}.\n{e}")
+        conn.close()
+        s.close()
+        return (False, None)
+    except OSError as e:
+        logger.error(f"Failed to parse {info}. Most likely socket related issue.\n{e}", exc_info=True, stack_info=True)
         conn.close()
         s.close()
         return (False, None)
@@ -355,111 +357,134 @@ def run_server():
     print("Server was stopped")
     return
 
-#______________________________________ MAIN _________________________________________________
-while True:
-    # Accept initial connection
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        # Setup socket on the mc-server's default port
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        s.bind((HOST, PORT))
-        s.listen()
-        print("Listening for connections...")
-        conn, addr = s.accept()
+def main():
+    #______________________________________ MAIN _________________________________________________
+    while True:
+        # Accept initial connection
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            packbuf = bytearray()
+            try:
+                # Setup socket on the mc-server's default port
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                s.bind((HOST, PORT))
+                s.listen()
+                print("Listening for connections...")
+                conn, addr = s.accept()
 
-        # The first thing the client sends to the server should always be the Handshake packet
-        # Depending on the value of the NextState field the client should either send a:
-        # (1 Status): Status Request
-        # (2 Login): Login Start
-        # TODO Apparently the client may also skip status request and immideatly send a ping request (unconfirmed)
-        # directly after the Handshake packet without waiting for a server response
-        # Expect Handshake (Client -> Server)
-        packbuf = bytearray(conn.recv(4096))
-        success, tup = tryParseRequeset(packbuf, conn, parseHandshakePacket, "Handshake Packet")
-        if not success:
-            continue
-        next_state, handshake_packet = tup
-        packbuf = packbuf[handshake_packet.total_length:]
+                # The first thing the client sends to the server should always be the Handshake packet
+                # Depending on the value of the NextState field the client should either send a:
+                # (1 Status): Status Request
+                # (2 Login): Login Start
+                # TODO Apparently the client may also skip status request and immideatly send a ping request (unconfirmed)
+                # directly after the Handshake packet without waiting for a server response
+                # Expect Handshake (Client -> Server)
 
-        STATUS = 1
-        LOGIN = 2
-        TRANSFER = 3 # Not implemented
-        if (next_state == STATUS):
-            print("Server entered Status State")
-            # If next state was set to Status, Status Requeset will already have been sent along with Handshake
-            # Parse Status Request (Client -> Server)
-            success, is_status_request = tryParseRequeset(packbuf, conn, parseStatusRequest, "Status Request")
-            if not success:
-                continue
-
-            # Respond to Status Request with Status Response
-            if (is_status_request):
-                response_data = createStatusResponseData()
-                status_response = createPacket(b'\x00', response_data)
-                conn.send(status_response)
-
-            # Expect Ping Request (Client -> Server)
-            print("Processing Ping Request")
-            if (is_status_request):
                 packbuf = bytearray(conn.recv(4096))
-            success, ping_request_data = tryParseRequeset(packbuf, conn, parsePingRequest, "Ping Request")
-            if not success:
-                continue
-            
-            # Respond with Pong Response (Server -> Client)
-            pong_response_packet = createPacket(b'\x01', ping_request_data)
-            print("Sending Pong Respone Packet")
-            conn.send(pong_response_packet)
-            print("Finished Status Sequence")
-            print("Closing Connection")
-            conn.close()
-            continue
-            
-
-        if (next_state == LOGIN):
-            print("Server entered Login State")
-            # Expect Login Start (Client -> Server)
-
-            success, tup = tryParseRequeset(packbuf, conn, parseLoginStart, "Login Start Request")
-            if not success:
-                continue
-            name, uuid = tup
-            # Parse whitelist entries
-            login_success = False
-            login_success = check_user_whitelisted(name, uuid)
-            disconnect_login_packet = b''
-            if (login_success):
-                # Respond with Disconnect (login) (Client -> Server)
-                LOGIN_SUCCESS = r"""{ "text":"Success. Starting Server. Please wait a couple seconds." }"""
-                disconnect_login_packet = createDisconnectLoginPacket(LOGIN_SUCCESS)
-                conn.send(disconnect_login_packet)
-                # Close connection to free it up for the mcserver
+            except OSError as e:
+                logger.error(f"Failed while trying to receive initial data. Most likely socket related issue.\n{e}", exc_info=True, stack_info=True)
                 conn.close()
                 s.close()
+                continue
+            success, tup = tryParseRequeset(packbuf, conn, parseHandshakePacket, "Handshake Packet")
+            if not success:
+                continue
+            next_state, handshake_packet = tup
+            packbuf = packbuf[handshake_packet.total_length:]
 
-                monitor_thread = threading.Thread(target=monitor_server_status)
-                server_thread = threading.Thread(target=run_server)
+            STATUS = 1
+            LOGIN = 2
+            TRANSFER = 3 # Not implemented
+            if (next_state == STATUS):
+                print("Server entered Status State")
+                # If next state was set to Status, Status Requeset will already have been sent along with Handshake
+                # Parse Status Request (Client -> Server)
+                success, is_status_request = tryParseRequeset(packbuf, conn, parseStatusRequest, "Status Request")
+                if not success:
+                    continue
+
+                # Respond to Status Request with Status Response
+                if (is_status_request):
+                    response_data = createStatusResponseData()
+                    status_response = createPacket(b'\x00', response_data)
+                    conn.send(status_response)
+
+                # Expect Ping Request (Client -> Server)
+                print("Processing Ping Request")
+                if (is_status_request):
+                    try:
+                        packbuf = bytearray(conn.recv(4096))
+                    except OSError as e:
+                        logger.error(f"Failed while trying to receive initial data. Most likely socket related issue.\n{e}", exc_info=True, stack_info=True)
+                        conn.close()
+                        s.close()
+                        continue
+                success, ping_request_data = tryParseRequeset(packbuf, conn, parsePingRequest, "Ping Request")
+                if not success:
+                    continue
                 
-                # This is kinda ugly
-                print("Preparing to start server...")
-                print("System will wait 5 Seconds in order for Socket to be freed up.")
-                time.sleep(5)
-                server_thread.start()
-                # TODO This is ugl. Wait a certain amount of time to make sure the server is running before starting monitoring thread
-                time.sleep(40)
-                monitor_thread.start()
-                server_thread.join()
-                monitor_thread.join()
-            else:
-                # Respond with Disconnect (login) (Client -> Server)
-                LOGIN_FAILURE = r"""{ "text":"Invalid Credentils. You are not whitelisted. Contact admins." }"""
-                disconnect_login_packet = createDisconnectLoginPacket(LOGIN_FAILURE)
-                conn.send(disconnect_login_packet)
+                # Respond with Pong Response (Server -> Client)
+                pong_response_packet = createPacket(b'\x01', ping_request_data)
+                print("Sending Pong Respone Packet")
+                conn.send(pong_response_packet)
+                print("Finished Status Sequence")
+                print("Closing Connection")
                 conn.close()
-        elif (next_state == TRANSFER):
-            print(f"Next State was TRANSFER {next_state}. Not implemented.")
-            conn.close()
-        else:
-            print(f"Next State was {next_state}. Unsupported option.")
-            conn.close()
-        print("Restarting mcwakeup")
+                continue
 
+
+            if (next_state == LOGIN):
+                print("Server entered Login State")
+                # Expect Login Start (Client -> Server)
+
+                success, tup = tryParseRequeset(packbuf, conn, parseLoginStart, "Login Start Request")
+                if not success:
+                    continue
+                name, uuid = tup
+                # Parse whitelist entries
+                login_success = False
+                login_success = check_user_whitelisted(name, uuid)
+                disconnect_login_packet = b''
+                if (login_success):
+                    # Respond with Disconnect (login) (Client -> Server)
+                    LOGIN_SUCCESS = r"""{ "text":"Success. Starting Server. Please wait a couple seconds." }"""
+                    disconnect_login_packet = createDisconnectLoginPacket(LOGIN_SUCCESS)
+                    conn.send(disconnect_login_packet)
+                    # Close connection to free it up for the mcserver
+                    conn.close()
+                    s.close()
+
+                    monitor_thread = threading.Thread(target=monitor_server_status)
+                    server_thread = threading.Thread(target=run_server)
+
+                    # This is kinda ugly
+                    print("Preparing to start server...")
+                    print("System will wait 5 Seconds in order for Socket to be freed up.")
+                    time.sleep(5)
+                    server_thread.start()
+                    # TODO This is ugl. Wait a certain amount of time to make sure the server is running before starting monitoring thread
+                    time.sleep(40)
+                    monitor_thread.start()
+                    server_thread.join()
+                    monitor_thread.join()
+                else:
+                    # Respond with Disconnect (login) (Client -> Server)
+                    LOGIN_FAILURE = r"""{ "text":"Invalid Credentils. You are not whitelisted. Contact admins." }"""
+                    disconnect_login_packet = createDisconnectLoginPacket(LOGIN_FAILURE)
+                    conn.send(disconnect_login_packet)
+                    conn.close()
+            elif (next_state == TRANSFER):
+                print(f"Next State was TRANSFER {next_state}. Not implemented.")
+                conn.close()
+            else:
+                print(f"Next State was {next_state}. Unsupported option.")
+                conn.close()
+            print("Restarting mcwakeup")
+
+
+while True:
+    try:
+        main()
+    except Exception as e:
+        print(f"Uncaught Error: {e}")
+        print("mcwakeup will attempt to restart...")
+        logger.error(f"Uncaught Error: {e}\n{e}", exc_info=True, stack_info=True)

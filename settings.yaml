@@ -1,0 +1,16 @@
+Mcserver:
+  Host:
+  Port:
+  Dir:
+  Args:
+
+Rcon:
+  Password:
+  Host:
+
+Paths:
+  Mcrcon:
+  Whitelist:
+
+Logging:
+  Path:
